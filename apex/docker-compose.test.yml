@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:///:memory:
+      REDIS_URL: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+      APP_ENV: development
+      APP_DEBUG: "true"
+      APP_SECRET_KEY: test-secret-key
+      JWT_SECRET_KEY: test-jwt-secret
+      ENCRYPTION_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcw==
+      ANTHROPIC_API_KEY: test-api-key
+    command: >
+      sh -c "pip install aiosqlite &&
+             pytest tests/ -v --cov=app --cov-report=term-missing"
+    depends_on:
+      - redis
+      - qdrant
+
+  redis:
+    image: redis:7-alpine
+
+  qdrant:
+    image: qdrant/qdrant:latest
