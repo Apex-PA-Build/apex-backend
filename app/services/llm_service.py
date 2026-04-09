@@ -1,8 +1,7 @@
 import json
-from collections.abc import AsyncGenerator
+import google.generativeai as genai
 from typing import Any
-
-import anthropic
+from collections.abc import AsyncGenerator
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
@@ -11,15 +10,13 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_client: anthropic.AsyncAnthropic | None = None
+_client_configured = False
 
-
-def get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    return _client
-
+def get_client() -> None:
+    global _client_configured
+    if not _client_configured:
+        genai.configure(api_key=settings.gemini_api_key)
+        _client_configured = True
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def chat(
@@ -28,68 +25,109 @@ async def chat(
     max_tokens: int | None = None,
     temperature: float = 0.7,
 ) -> str:
-    client = get_client()
-    kwargs: dict[str, Any] = {
-        "model": settings.anthropic_model,
-        "max_tokens": max_tokens or settings.anthropic_max_tokens,
-        "messages": messages,
-        "temperature": temperature,
-    }
-    if system:
-        kwargs["system"] = system
+    get_client()
+    model = genai.GenerativeModel(settings.gemini_model, system_instruction=system)
+    
+    history = []
+    current_message = ""
+    for msg in messages:
+        role = "user" if msg["role"] == "user" else "model"
+        if msg == messages[-1]:
+            current_message = msg["content"]
+        else:
+            history.append({"role": role, "parts": [msg["content"]]})
+            
     try:
-        response = await client.messages.create(**kwargs)
-        return response.content[0].text  # type: ignore[union-attr]
-    except anthropic.APIError as exc:
+        if history:
+            chat_session = model.start_chat(history=history)
+            response = await chat_session.send_message_async(
+                current_message,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_tokens or 4096,
+                )
+            )
+        else:
+            response = await model.generate_content_async(
+                current_message,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_tokens or 4096,
+                )
+            )
+        return response.text
+    except Exception as exc:
         logger.error("llm_api_error", error=str(exc))
         raise LLMError(f"LLM request failed: {exc}") from exc
-
 
 async def stream_chat(
     messages: list[dict[str, Any]],
     system: str | None = None,
     max_tokens: int | None = None,
 ) -> AsyncGenerator[str, None]:
-    client = get_client()
-    kwargs: dict[str, Any] = {
-        "model": settings.anthropic_model,
-        "max_tokens": max_tokens or settings.anthropic_max_tokens,
-        "messages": messages,
-    }
-    if system:
-        kwargs["system"] = system
+    get_client()
+    model = genai.GenerativeModel(settings.gemini_model, system_instruction=system)
+    
+    history = []
+    current_message = ""
+    for msg in messages:
+        role = "user" if msg["role"] == "user" else "model"
+        if msg == messages[-1]:
+            current_message = msg["content"]
+        else:
+            history.append({"role": role, "parts": [msg["content"]]})
+
     try:
-        async with client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                yield text
-    except anthropic.APIError as exc:
+        if history:
+            chat_session = model.start_chat(history=history)
+            response = await chat_session.send_message_async(
+                current_message,
+                stream=True,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.7,
+                    max_output_tokens=max_tokens or 4096,
+                )
+            )
+        else:
+            response = await model.generate_content_async(
+                current_message,
+                stream=True,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.7,
+                    max_output_tokens=max_tokens or 4096,
+                )
+            )
+        async for chunk in response:
+            if chunk.text:
+                yield chunk.text
+    except Exception as exc:
         logger.error("llm_stream_error", error=str(exc))
         raise LLMError(f"LLM stream failed: {exc}") from exc
-
 
 async def extract_json(
     prompt: str,
     system: str | None = None,
 ) -> dict[str, Any] | list[Any]:
-    """Ask the LLM to return pure JSON and parse it."""
-    raw = await chat(
-        messages=[{"role": "user", "content": prompt}],
-        system=system or "You are a precise data extractor. Return ONLY valid JSON, no markdown.",
-        temperature=0.0,
-    )
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    get_client()
+    
+    model = genai.GenerativeModel(settings.gemini_model, system_instruction=system)
     try:
+        response = await model.generate_content_async(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0,
+                response_mime_type="application/json",
+            )
+        )
+        raw = response.text.strip()
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise LLMError(f"LLM returned invalid JSON: {exc}") from exc
-
+    except Exception as exc:
+        logger.error("llm_api_error", error=str(exc))
+        raise LLMError(f"LLM request failed: {exc}") from exc
 
 async def classify_single(prompt: str, valid_outputs: list[str]) -> str:
-    """Call the LLM expecting exactly one token from valid_outputs."""
     result = await chat(
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,

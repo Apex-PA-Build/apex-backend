@@ -16,7 +16,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-EMBEDDING_DIM = 1536  # text-embedding-3-small
+EMBEDDING_DIM = 3072  # gemini-embedding-001
 _client: AsyncQdrantClient | None = None
 
 
@@ -54,9 +54,9 @@ async def search_similar(
     user_id: str, embedding: list[float], limit: int = 10, score_threshold: float = 0.75
 ) -> list[dict[str, Any]]:
     client = get_vector_client()
-    results = await client.search(
+    results = await client.query_points(
         collection_name=settings.qdrant_collection_memory,
-        query_vector=embedding,
+        query=embedding,
         query_filter=Filter(
             must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
         ),
@@ -64,7 +64,7 @@ async def search_similar(
         score_threshold=score_threshold,
         with_payload=True,
     )
-    return [{"id": r.id, "score": r.score, "payload": r.payload} for r in results]
+    return [{"id": r.id, "score": r.score, "payload": r.payload} for r in results.points]
 
 
 async def delete_memory(memory_id: UUID) -> None:

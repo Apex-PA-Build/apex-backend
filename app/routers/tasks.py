@@ -13,6 +13,10 @@ from app.schemas.task import (
     TaskCreate,
     TaskRead,
     TaskUpdate,
+    BrainDumpRequest,
+    BrainDumpResponse,
+    ReplanDayRequest,
+    ReplanDayResponse,
 )
 from app.services.task_service import (
     bulk_defer,
@@ -79,10 +83,11 @@ async def remove_task(
 @router.get("/focus-now", response_model=FocusNowResponse)
 async def get_focus_now(
     request: Request,
+    energy: str | None = Query(default=None, pattern="^(low|medium|high)$"),
     db: AsyncSession = Depends(get_db),
 ) -> FocusNowResponse:
     """Return the single most important task to focus on right now."""
-    result = await focus_now(_uid(request), db)
+    result = await focus_now(_uid(request), db, energy=energy)
     return FocusNowResponse(
         task=TaskRead.model_validate(result["task"]) if result["task"] else None,
         reason=result["reason"],
@@ -109,3 +114,25 @@ async def classify_eisenhower(
     """Classify tasks into Eisenhower quadrants using LLM + heuristic fallback."""
     results = await classify_tasks_eisenhower(data.task_ids, _uid(request), db)
     return EisenhowerClassifyResponse(results=results)
+
+@router.post("/brain-dump", response_model=BrainDumpResponse)
+async def brain_dump(
+    data: BrainDumpRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> BrainDumpResponse:
+    """Parse a stream-of-consciousness text into discrete tasks."""
+    from app.services.task_service import process_brain_dump
+    tasks = await process_brain_dump(data.text, _uid(request), db)
+    return BrainDumpResponse(tasks_created=[TaskRead.model_validate(t) for t in tasks])
+
+@router.post("/replan-day", response_model=ReplanDayResponse)
+async def replan_day(
+    data: ReplanDayRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> ReplanDayResponse:
+    """Compassionately reschedule pending tasks based on an unexpected event."""
+    from app.services.task_service import process_replan_day
+    result = await process_replan_day(data.context, _uid(request), db)
+    return ReplanDayResponse(**result)

@@ -19,16 +19,17 @@ from app.services.llm_service import extract_json, get_client
 logger = get_logger(__name__)
 
 
+import google.generativeai as genai
+
 async def _embed(text: str) -> list[float]:
-    """Generate an embedding using the Anthropic client (falls back to OpenAI-compatible endpoint)."""
-    # Qdrant requires real embeddings; use a text-embedding model here.
-    # For production, wire up your preferred embedding provider.
-    # This stub returns a zero vector so the service is importable without credentials.
-    client = get_client()
-    # NOTE: Replace with actual embedding call, e.g.:
-    # from openai import AsyncOpenAI; oai = AsyncOpenAI(); ...
-    logger.warning("embed_stub_called", text_preview=text[:50])
-    return [0.0] * 1536  # placeholder — replace with real embedding
+    """Generate an embedding using Gemini text-embedding-004."""
+    get_client()
+    result = genai.embed_content(
+        model="models/gemini-embedding-001",
+        content=text,
+        task_type="retrieval_document",
+    )
+    return result['embedding']
 
 
 async def extract_and_store_memories(

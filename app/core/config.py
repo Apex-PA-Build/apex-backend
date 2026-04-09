@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-20250514"
     anthropic_max_tokens: int = 4096
 
+    # Gemini
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+
     # JWT
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"

@@ -34,7 +34,10 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    app.include_router(api_router)
+    from fastapi import Depends
+    from fastapi.security import HTTPBearer
+    security = HTTPBearer(auto_error=False)
+    app.include_router(api_router, dependencies=[Depends(security)])
 
     # ── Health check (no auth) ────────────────────────────────────────────────
     @app.get("/health", tags=["Health"])

@@ -29,7 +29,8 @@ from app.models.agent_message import AgentMessage
 target_metadata = Base.metadata
 
 # Override sqlalchemy.url from env settings
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Escape % signs so configparser doesn't treat URL-encoded chars (e.g. %23) as interpolation
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:

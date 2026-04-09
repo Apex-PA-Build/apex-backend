@@ -65,7 +65,7 @@ def detect_overload(task_count: int) -> dict[str, bool | str]:
     return {"overloaded": False, "severity": "none", "message": ""}
 
 
-def pick_focus_task(tasks: list["Task"]) -> "Task | None":
+def pick_focus_task(tasks: list["Task"], energy: str | None = None) -> "Task | None":
     """
     Pick the single most important task to focus on right now.
     Prefers Q1 → Q2 with nearest due date.
@@ -85,6 +85,13 @@ def pick_focus_task(tasks: list["Task"]) -> "Task | None":
         return (FOCUS_QUADRANT_PRIORITY.index(quadrant), -urgency, due_score)
 
     pending = [t for t in tasks if t.status in ("pending", "in_progress")]
+
+    if energy == "low":
+        # If low energy, filter out high energy tasks unless they are overdue (urgency=3)
+        filtered = [t for t in pending if t.energy_required != "high" or score_urgency(t) >= 3]
+        if filtered:
+            pending = filtered
+
     if not pending:
         return None
     return sorted(pending, key=sort_key)[0]

@@ -6,6 +6,7 @@ from app.routers import (
     brief,
     calendar,
     calls,
+    chat,
     goals,
     integrations,
     memory,
@@ -26,4 +27,5 @@ api_router.include_router(agent.router,        prefix="/agent",        tags=["Ag
 api_router.include_router(integrations.router, prefix="/integrations", tags=["Integrations"])
 api_router.include_router(calls.router,        prefix="/calls",        tags=["Calls"])
 api_router.include_router(reminders.router,    prefix="/reminders",    tags=["Reminders"])
+api_router.include_router(chat.router,         prefix="/chat",         tags=["Chat"])
 api_router.include_router(websockets.router,   prefix="/ws",           tags=["WebSockets"])

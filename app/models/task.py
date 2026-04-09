@@ -32,6 +32,7 @@ class Task(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|in_progress|done|deferred|cancelled
     priority: Mapped[str] = mapped_column(String(16), default="medium")  # low|medium|high|critical
     eisenhower_quadrant: Mapped[int | None] = mapped_column(Integer)  # 1=urgent+imp, 2=not urgent+imp, 3=urgent+not imp, 4=neither
+    energy_required: Mapped[str] = mapped_column(String(16), default="medium")  # low|medium|high
     source_integration: Mapped[str | None] = mapped_column(String(64))
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
