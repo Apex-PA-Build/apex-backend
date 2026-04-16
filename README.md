@@ -9,8 +9,8 @@ APEX is a production-grade FastAPI backend for an AI-powered personal assistant.
 ## Architecture at a Glance
 
 ```
-FastAPI (main.py)
-  ├── Middleware:   CORS → Logging → Auth (JWT) → Error Handler
+FastAPI (main.py) 
+  ├── Middleware:   CORS → Logging → Auth (JWT) → Error Handler.
   ├── Routers:      /api/v1/{auth,brief,tasks,goals,calendar,memory,agent,integrations,calls,reminders}
   │                 WebSockets: /api/v1/ws/{brief,call,reminders,agent}
   ├── Services:     LLM (Claude), Memory, Task Intelligence, Calendar Sync,
