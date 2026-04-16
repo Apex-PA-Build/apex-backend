@@ -6,6 +6,8 @@ APEX is a production-grade FastAPI backend for an AI-powered personal assistant.
 
 ---
 
+
+
 ## Architecture at a Glance
 
 ```
