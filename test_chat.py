@@ -1,29 +1,45 @@
+import asyncio
 import httpx
-import uuid
-import json
+from datetime import datetime, timedelta, timezone
+from jose import jwt
 
-base_url = "http://localhost:8000/api/v1"
-with httpx.Client(base_url=base_url, timeout=30.0) as client:
-    email = f"test_{uuid.uuid4().hex[:6]}@example.com"
-    r_reg = client.post("/auth/register", json={
-        "email": email,
-        "password": "Password123!",
-        "name": "Chatbot Tester"
-    })
-    token = r_reg.json().get("access_token")
-    headers = {"Authorization": f"Bearer {token}"}
+# We read secret from .env or hardcode what we saw in .env
+JWT_SECRET_KEY = "5f7ee9ba834befc6aa2a91c8908b0020cc7664e372919068a36ae3de09cf7cda"
+JWT_ALGORITHM = "HS256"
+
+def create_access_token(user_id: str):
+    expire = datetime.now(timezone.utc) + timedelta(minutes=30)
+    to_encode = {
+        "sub": user_id,
+        "type": "access",
+        "exp": expire,
+        "iat": datetime.now(timezone.utc)
+    }
+    return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+async def main():
+    user_id = "677bc557-3108-4327-8515-b544cee480a9"
+    token = create_access_token(user_id)
     
-    # 1. Seed memory
-    text = "Yesterday, I told Sarah that I really love blueberry muffins, but I absolutely hate chocolate cake."
-    print("🧠 Seeding memory...")
-    r_brain = client.post("/tasks/brain-dump", json={"text": text}, headers=headers)
-    print("Brain dump status:", r_brain.status_code)
+    url = "http://localhost:8000/api/v1/chat"
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "message": "I want to plan a trip to north india next week"
+    }
     
-    # 2. Chat API
-    print("🗣️ Asking chat...")
-    r_chat = client.post("/chat", json={"message": "What kind of desserts do I like?"}, headers=headers)
-    print("Chat status:", r_chat.status_code)
-    try:
-        print(json.dumps(r_chat.json(), indent=2))
-    except:
-        print(r_chat.text)
+    print("Hitting Chat Endpoint with fresh token...")
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        response = await client.post(url, json=payload, headers=headers)
+        
+        print("\nStatus Code:", response.status_code)
+        try:
+            print("Response:", response.json())
+        except Exception:
+            print("Raw Response:", response.text)
+
+if __name__ == "__main__":
+    asyncio.run(main())

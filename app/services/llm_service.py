@@ -1,8 +1,10 @@
 import json
-import google.generativeai as genai
 from typing import Any
 from collections.abc import AsyncGenerator
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+import anthropic
+from anthropic import AsyncAnthropic
 
 from app.core.config import settings
 from app.core.exceptions import LLMError
@@ -10,13 +12,13 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_client_configured = False
+_client = None
 
-def get_client() -> None:
-    global _client_configured
-    if not _client_configured:
-        genai.configure(api_key=settings.gemini_api_key)
-        _client_configured = True
+def get_client() -> AsyncAnthropic:
+    global _client
+    if _client is None:
+        _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return _client
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def chat(
@@ -25,37 +27,50 @@ async def chat(
     max_tokens: int | None = None,
     temperature: float = 0.7,
 ) -> str:
-    get_client()
-    model = genai.GenerativeModel(settings.gemini_model, system_instruction=system)
+    client = get_client()
     
-    history = []
-    current_message = ""
+    # Check if thinking mode is requested using claude-3-7-sonnet
+    # If thinking is enabled, max_tokens MUST be larger than budget_tokens.
+    use_thinking = "claude-3-7-sonnet" in settings.anthropic_model
+    budget_tokens = 16000
+    
+    # Prepare thinking parameters and ensure temperature restrictions
+    kwargs = {}
+    if use_thinking:
+        max_tokens_val = max_tokens or settings.anthropic_max_tokens or 20000
+        if max_tokens_val <= budget_tokens:
+            max_tokens_val = budget_tokens + 4000
+            
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget_tokens}
+        # Temperature must be exactly 1.0 when thinking is enabled
+        kwargs["temperature"] = 1.0
+        kwargs["max_tokens"] = max_tokens_val
+    else:
+        kwargs["temperature"] = temperature
+        kwargs["max_tokens"] = max_tokens or settings.anthropic_max_tokens or 4096
+    
+    # Translate to Anthropic format
+    anthropic_msgs = []
     for msg in messages:
-        role = "user" if msg["role"] == "user" else "model"
-        if msg == messages[-1]:
-            current_message = msg["content"]
-        else:
-            history.append({"role": role, "parts": [msg["content"]]})
+        role = "user" if msg["role"] == "user" else "assistant"
+        anthropic_msgs.append({"role": role, "content": msg["content"]})
             
     try:
-        if history:
-            chat_session = model.start_chat(history=history)
-            response = await chat_session.send_message_async(
-                current_message,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_tokens or 4096,
-                )
-            )
-        else:
-            response = await model.generate_content_async(
-                current_message,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_tokens or 4096,
-                )
-            )
-        return response.text
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            system=system or "",
+            messages=anthropic_msgs,
+            **kwargs
+        )
+        
+        # Anthropic thinking chunks are returned alongside text chunks
+        # Only return the final text block to the user
+        text_content = ""
+        for block in response.content:
+            if block.type == "text":
+                text_content += block.text
+                
+        return text_content
     except Exception as exc:
         logger.error("llm_api_error", error=str(exc))
         raise LLMError(f"LLM request failed: {exc}") from exc
@@ -65,41 +80,39 @@ async def stream_chat(
     system: str | None = None,
     max_tokens: int | None = None,
 ) -> AsyncGenerator[str, None]:
-    get_client()
-    model = genai.GenerativeModel(settings.gemini_model, system_instruction=system)
+    client = get_client()
     
-    history = []
-    current_message = ""
+    use_thinking = "claude-3-7-sonnet" in settings.anthropic_model
+    budget_tokens = 16000
+    
+    kwargs = {}
+    if use_thinking:
+        max_tokens_val = max_tokens or settings.anthropic_max_tokens or 20000
+        if max_tokens_val <= budget_tokens:
+            max_tokens_val = budget_tokens + 4000
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget_tokens}
+        kwargs["temperature"] = 1.0
+        kwargs["max_tokens"] = max_tokens_val
+    else:
+        kwargs["temperature"] = 0.7
+        kwargs["max_tokens"] = max_tokens or settings.anthropic_max_tokens or 4096
+        
+    anthropic_msgs = []
     for msg in messages:
-        role = "user" if msg["role"] == "user" else "model"
-        if msg == messages[-1]:
-            current_message = msg["content"]
-        else:
-            history.append({"role": role, "parts": [msg["content"]]})
+        role = "user" if msg["role"] == "user" else "assistant"
+        anthropic_msgs.append({"role": role, "content": msg["content"]})
 
     try:
-        if history:
-            chat_session = model.start_chat(history=history)
-            response = await chat_session.send_message_async(
-                current_message,
-                stream=True,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.7,
-                    max_output_tokens=max_tokens or 4096,
-                )
-            )
-        else:
-            response = await model.generate_content_async(
-                current_message,
-                stream=True,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.7,
-                    max_output_tokens=max_tokens or 4096,
-                )
-            )
-        async for chunk in response:
-            if chunk.text:
-                yield chunk.text
+        async with client.messages.stream(
+            model=settings.anthropic_model,
+            system=system or "",
+            messages=anthropic_msgs,
+            **kwargs
+        ) as stream:
+             async for event in stream:
+                 # Yield purely the text answers for standard output
+                 if event.type == "text_delta":
+                     yield event.text
     except Exception as exc:
         logger.error("llm_stream_error", error=str(exc))
         raise LLMError(f"LLM stream failed: {exc}") from exc
@@ -108,18 +121,34 @@ async def extract_json(
     prompt: str,
     system: str | None = None,
 ) -> dict[str, Any] | list[Any]:
-    get_client()
+    client = get_client()
     
-    model = genai.GenerativeModel(settings.gemini_model, system_instruction=system)
+    # Pre-fill response with opening bracket to force JSON
+    messages = [
+        {"role": "user", "content": prompt},
+        {"role": "assistant", "content": "["}
+    ]
+    
+    sys_prompt = system or "You must output strictly valid JSON format. Provide the raw JSON only without markdown code blocks."
+    
     try:
-        response = await model.generate_content_async(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.0,
-                response_mime_type="application/json",
-            )
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            system=sys_prompt,
+            messages=messages,
+            max_tokens=4000,
+            temperature=0.0
         )
-        raw = response.text.strip()
+        
+        # We forced a leading bracket, so reattach it
+        raw = "[" + response.content[0].text.strip()
+        
+        # Anthropic sometimes adds markdown codeblocks even when we force it, strip them out just in case
+        if raw.startswith("```json"):
+            raw = raw[7:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+            
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise LLMError(f"LLM returned invalid JSON: {exc}") from exc
@@ -128,12 +157,18 @@ async def extract_json(
         raise LLMError(f"LLM request failed: {exc}") from exc
 
 async def classify_single(prompt: str, valid_outputs: list[str]) -> str:
-    result = await chat(
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-        max_tokens=5,
-    )
-    result = result.strip()
-    if result not in valid_outputs:
-        raise LLMError(f"Unexpected classification output: {result!r}")
-    return result
+    client = get_client()
+    try:
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=5,
+            temperature=0.0
+        )
+        result = response.content[0].text.strip()
+        if result not in valid_outputs:
+            raise LLMError(f"Unexpected classification output: {result!r}")
+        return result
+    except Exception as exc:
+        logger.error("llm_api_error", error=str(exc))
+        raise LLMError(f"Classification failed: {exc}") from exc

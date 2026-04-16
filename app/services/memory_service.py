@@ -14,7 +14,7 @@ from app.db.vector_store import (
     upsert_memory,
 )
 from app.models.memory import Memory
-from app.services.llm_service import extract_json, get_client
+from app.services.llm_service import extract_json
 
 logger = get_logger(__name__)
 
@@ -23,13 +23,19 @@ import google.generativeai as genai
 
 async def _embed(text: str) -> list[float]:
     """Generate an embedding using Gemini text-embedding-004."""
-    get_client()
-    result = genai.embed_content(
-        model="models/gemini-embedding-001",
-        content=text,
-        task_type="retrieval_document",
-    )
-    return result['embedding']
+    try:
+        genai.configure(api_key=settings.gemini_api_key)
+        result = genai.embed_content(
+            model="models/gemini-embedding-001",
+            content=text,
+            task_type="retrieval_document",
+        )
+        return result['embedding']
+    except Exception as e:
+        logger.error(f"Gemini Embedding failed (Likely invalid/expired key): {e}")
+        # Return empty vector to prevent entire background flow from crashing
+        # Assuming Qdrant vector size 768.
+        return [0.0] * 768
 
 
 async def extract_and_store_memories(

@@ -3,7 +3,9 @@ from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from app.models.user import User
 from app.models.memory import Memory
-import app.models.task  # required for relations
+import app.models.task
+import app.models.goal
+import app.models.integration
 from app.core.security import create_access_token
 import httpx
 import json
