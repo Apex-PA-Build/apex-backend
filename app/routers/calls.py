@@ -39,8 +39,6 @@ async def end_call(
     return result
 
 
-
-
 @router.get("/{session_id}/summary")
 async def get_call_summary(session_id: str, request: Request) -> dict:
     """Retrieve the post-call summary for a completed session."""
