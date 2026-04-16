@@ -1,0 +1,128 @@
+# =============================================================================
+# APEX Backend — .gitignore
+# =============================================================================
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+secrets/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+.eggs/
+lib/
+lib64/
+MANIFEST
+
+# ── Virtual Environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+.python-version
+
+# ── Testing & Coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.coveragerc
+nosetests.xml
+test-results/
+junit.xml
+
+# ── Type Checking ─────────────────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# ── Linting & Formatting ──────────────────────────────────────────────────────
+.ruff_cache/
+.flake8
+
+# ── Logs & Runtime Files ──────────────────────────────────────────────────────
+*.log
+*.out
+*.err
+logs/
+api.log
+
+# ── Database ──────────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+# Keep Alembic migration scripts but ignore local DB state
+# alembic/versions/ — keep tracked
+
+# ── Alembic ───────────────────────────────────────────────────────────────────
+# alembic.ini contains no secrets and should be tracked
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# docker-compose files are tracked; ignore local override
+docker-compose.override.yml
+
+# ── IDEs & Editors ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+ehthumbs.db
+Thumbs.db
+
+# ── Node (if any tooling is added) ───────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Uploads & Generated Files ─────────────────────────────────────────────────
+uploads/
+media/
+static/collected/
+*.tmp
+*.bak
+*.orig
+
+# ── Jupyter (if used for data exploration) ────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Profiling ─────────────────────────────────────────────────────────────────
+*.prof
+*.lprof
