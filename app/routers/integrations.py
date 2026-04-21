@@ -1,74 +1,43 @@
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import RedirectResponse
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
 
-from app.core.exceptions import AuthError
-from app.db.session import get_db
-from app.services.integration_service import (
-    disconnect,
-    exchange_code,
-    get_auth_url,
-    list_integrations,
-)
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import RedirectResponse
+
+from app.middleware.auth import get_user_id
+from app.schemas.common import MessageResponse
+from app.schemas.integration import AuthURLResponse, IntegrationRead
+from app.services import integration as integration_svc
 
 router = APIRouter()
 
 
-def _uid(request: Request) -> str:
-    uid: str | None = getattr(request.state, "user_id", None)
-    if not uid:
-        raise AuthError("Not authenticated")
-    return uid
+@router.get("", response_model=list[IntegrationRead])
+async def list_integrations(request: Request) -> Any:
+    user_id = get_user_id(request)
+    return await integration_svc.list_integrations(user_id)
 
 
-@router.get("")
-async def get_integrations(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> list[dict]:
-    """List all connected integrations for the current user (tokens are never returned)."""
-    integrations = await list_integrations(_uid(request), db)
-    return [
-        {
-            "id": str(i.id),
-            "provider": i.provider,
-            "is_active": i.is_active,
-            "scope": i.scope,
-            "expires_at": i.expires_at.isoformat() if i.expires_at else None,
-            "created_at": i.created_at.isoformat(),
-        }
-        for i in integrations
-    ]
-
-
-@router.get("/{provider}/auth-url")
-async def get_oauth_url(provider: str, request: Request) -> dict:
-    """Get the OAuth2 authorization URL to redirect the user to."""
-    url = get_auth_url(provider, _uid(request))
-    return {"auth_url": url, "provider": provider}
+@router.get("/{provider}/auth-url", response_model=AuthURLResponse)
+async def get_auth_url(request: Request, provider: str) -> Any:
+    user_id = get_user_id(request)
+    url = integration_svc.get_auth_url(provider, user_id)
+    return {"url": url, "provider": provider}
 
 
 @router.get("/callback/{provider}")
 async def oauth_callback(
     provider: str,
     code: str = Query(...),
-    state: str = Query(...),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """OAuth2 callback endpoint. Exchanges code for tokens and stores them."""
-    user_id = state.split(":")[0]
-    integration = await exchange_code(provider, code, user_id, db)
-    return {
-        "connected": True,
-        "provider": provider,
-        "integration_id": str(integration.id),
-    }
+    state: str = Query(...),  # user_id passed via OAuth state param
+) -> Any:
+    """OAuth callback — no auth middleware (called by the provider)."""
+    await integration_svc.exchange_code(provider, code, user_id=state)
+    # Redirect to frontend success page
+    return RedirectResponse(url=f"http://localhost:3000/settings?connected={provider}")
 
 
-@router.delete("/{provider}", status_code=200)
-async def remove_integration(
-    provider: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    await disconnect(provider, _uid(request), db)
-    return {"disconnected": True, "provider": provider}
+@router.delete("/{provider}", response_model=MessageResponse)
+async def disconnect_integration(request: Request, provider: str) -> Any:
+    user_id = get_user_id(request)
+    await integration_svc.disconnect(user_id, provider)
+    return {"message": f"{provider} disconnected"}

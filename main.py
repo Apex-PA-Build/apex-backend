@@ -1,52 +1,71 @@
+import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.events import lifespan
-from app.middleware.auth_middleware import AuthMiddleware
-from app.middleware.cors_middleware import register_cors
-from app.middleware.error_handler import register_exception_handlers
-from app.middleware.logging_middleware import LoggingMiddleware
+from app.core.exceptions import APEXError
+from app.core.logging import configure_logging
+from app.middleware.auth import AuthMiddleware
+from app.middleware.error_handler import apex_exception_handler, unhandled_exception_handler
+from app.middleware.logging import LoggingMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware
 from app.routers import api_router
+
+configure_logging()
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title=settings.app_name,
-        description=(
-            "APEX — AI Personal Assistant OS. "
-            "A deeply loyal, emotionally intelligent personal assistant that watches, "
-            "thinks, coordinates, and acts on your behalf."
-        ),
-        version="0.1.0",
+        title="APEX — AI Personal Assistant OS",
+        description="Your deeply loyal, proactive AI chief-of-staff.",
+        version="1.0.0",
         docs_url="/docs" if not settings.is_production else None,
-        redoc_url="/redoc" if not settings.is_production else None,
-        openapi_url="/openapi.json" if not settings.is_production else None,
+        redoc_url=None,
         lifespan=lifespan,
     )
 
-    # ── Middleware (order matters: outermost = first to run) ──────────────────
-    register_cors(app)
-    app.add_middleware(LoggingMiddleware)
+    # ── Middleware (applied in reverse order of declaration) ──────────
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(AuthMiddleware)
+    app.add_middleware(LoggingMiddleware)
 
-    # ── Exception handlers ────────────────────────────────────────────────────
-    register_exception_handlers(app)
+    # ── Exception handlers ────────────────────────────────────────────
+    app.add_exception_handler(APEXError, apex_exception_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(Exception, unhandled_exception_handler)
 
-    # ── Routers ───────────────────────────────────────────────────────────────
-    from fastapi import Depends
-    from fastapi.security import HTTPBearer
-    security = HTTPBearer(auto_error=False)
-    app.include_router(api_router, dependencies=[Depends(security)])
+    # ── Routes ───────────────────────────────────────────────────────
+    app.include_router(api_router)
 
-    # ── Health check (no auth) ────────────────────────────────────────────────
-    @app.get("/health", tags=["Health"])
-    async def health() -> JSONResponse:
-        return JSONResponse({"status": "ok", "app": settings.app_name})
+    # ── Swagger Bearer auth button ────────────────────────────────────
+    def custom_openapi() -> dict:
+        if app.openapi_schema:
+            return app.openapi_schema
+        from fastapi.openapi.utils import get_openapi
+        schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        schema.setdefault("components", {})["securitySchemes"] = {
+            "BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+        }
+        schema["security"] = [{"BearerAuth": []}]
+        app.openapi_schema = schema
+        return schema
 
-    @app.get("/", tags=["Health"])
-    async def root() -> JSONResponse:
-        return JSONResponse({"message": f"Welcome to {settings.app_name} API"})
+    app.openapi = custom_openapi  # type: ignore[method-assign]
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> dict[str, str]:
+        return {"service": "APEX", "status": "running", "version": "1.0.0"}
+
+    @app.get("/health", include_in_schema=False)
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
 
     return app
 
@@ -54,13 +73,10 @@ def create_app() -> FastAPI:
 app = create_app()
 
 if __name__ == "__main__":
-    import uvicorn
-
     uvicorn.run(
         "main:app",
-        host=settings.app_host,
-        port=settings.app_port,
-        workers=settings.app_workers,
-        reload=settings.app_debug,
-        log_config=None,  # structlog handles logging
+        host=settings.host,
+        port=settings.port,
+        reload=settings.debug,
+        log_level="info",
     )

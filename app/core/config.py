@@ -1,91 +1,67 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AnyHttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # App
+    # ── App ──────────────────────────────────────────────────────────
     app_name: str = "APEX"
-    app_env: Literal["development", "staging", "production"] = "development"
-    app_debug: bool = False
-    app_secret_key: str
-    app_host: str = "0.0.0.0"
-    app_port: int = 8000
-    app_workers: int = 1
+    env: Literal["development", "staging", "production"] = "development"
+    debug: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8000
 
-    # Database
-    database_url: str
-    database_pool_size: int = 10
-    database_max_overflow: int = 20
+    # ── Supabase ─────────────────────────────────────────────────────
+    supabase_url: str
+    supabase_anon_key: str
+    supabase_service_role_key: str
+    supabase_jwt_secret: str
 
-    # Redis
-    redis_url: str = "redis://localhost:6379/0"
-    redis_ttl_default: int = 3600
-
-    # Qdrant
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_api_key: str = ""
-    qdrant_collection_memory: str = "apex_memory"
-
-    # Anthropic
+    # ── Anthropic (Claude) ────────────────────────────────────────────
     anthropic_api_key: str
-    anthropic_model: str = "claude-sonnet-4-20250514"
-    anthropic_max_tokens: int = 4096
+    model_large: str = "claude-opus-4-7"             # morning briefs, complex reasoning
+    model_medium: str = "claude-sonnet-4-6"          # chat, call extraction
+    model_small: str = "claude-haiku-4-5-20251001"   # classification, memory extraction
 
-    # Gemini
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    # ── Embeddings (local sentence-transformers) ──────────────────────
+    embedding_dim: int = 384
 
-    # JWT
-    jwt_secret_key: str
-    jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 30
-    jwt_refresh_token_expire_days: int = 30
+    # ── Redis ────────────────────────────────────────────────────────
+    redis_url: str = "redis://localhost:6379/0"
 
-    # Encryption
-    encryption_key: str
-
-    # OAuth
+    # ── OAuth Integrations ────────────────────────────────────────────
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_redirect_uri: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/v1/integrations/callback/google"
     slack_client_id: str = ""
     slack_client_secret: str = ""
-    slack_redirect_uri: str = ""
     notion_client_id: str = ""
     notion_client_secret: str = ""
-    notion_redirect_uri: str = ""
+    zoom_client_id: str = ""
+    zoom_client_secret: str = ""
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # ── Security ─────────────────────────────────────────────────────
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    token_encryption_key: str
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors(cls, v: str | list[str]) -> list[str]:
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+    # ── CORS — stored as a comma-separated string, exposed as a list ──
+    # In .env use: ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+    allowed_origins_raw: str = "http://localhost:3000,http://localhost:3001"
 
-    # Rate limiting
-    rate_limit_per_minute: int = 60
-    rate_limit_burst: int = 20
+    # ── Rate Limiting ─────────────────────────────────────────────────
+    rate_limit_requests: int = 60
+    rate_limit_window: int = 60  # seconds
 
-    # Agent
-    agent_message_ttl_days: int = 30
-    agent_auto_respond: bool = False
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins_raw.split(",") if o.strip()]
 
     @property
     def is_production(self) -> bool:
-        return self.app_env == "production"
+        return self.env == "production"
 
 
 @lru_cache

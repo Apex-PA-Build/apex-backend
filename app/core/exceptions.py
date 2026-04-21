@@ -1,62 +1,40 @@
-from typing import Any
+from fastapi import HTTPException
 
 
-class APEXError(Exception):
-    """Base exception for all APEX application errors."""
-
-    status_code: int = 500
-    error_code: str = "internal_error"
-
-    def __init__(self, message: str, detail: Any = None) -> None:
-        super().__init__(message)
-        self.message = message
-        self.detail = detail
-
-    def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "error": self.error_code,
-            "message": self.message,
-        }
-        if self.detail is not None:
-            payload["detail"] = self.detail
-        return payload
+class APEXError(HTTPException):
+    pass
 
 
 class AuthError(APEXError):
-    status_code = 401
-    error_code = "auth_error"
+    def __init__(self, detail: str = "Unauthorized") -> None:
+        super().__init__(status_code=401, detail=detail)
 
 
 class ForbiddenError(APEXError):
-    status_code = 403
-    error_code = "forbidden"
+    def __init__(self, detail: str = "Forbidden") -> None:
+        super().__init__(status_code=403, detail=detail)
 
 
 class NotFoundError(APEXError):
-    status_code = 404
-    error_code = "not_found"
+    def __init__(self, resource: str = "Resource") -> None:
+        super().__init__(status_code=404, detail=f"{resource} not found")
 
 
 class ConflictError(APEXError):
-    status_code = 409
-    error_code = "conflict"
-
-
-class ValidationError(APEXError):
-    status_code = 422
-    error_code = "validation_error"
+    def __init__(self, detail: str) -> None:
+        super().__init__(status_code=409, detail=detail)
 
 
 class RateLimitError(APEXError):
-    status_code = 429
-    error_code = "rate_limit_exceeded"
+    def __init__(self) -> None:
+        super().__init__(status_code=429, detail="Too many requests. Slow down.")
 
 
 class IntegrationError(APEXError):
-    status_code = 502
-    error_code = "integration_error"
+    def __init__(self, detail: str) -> None:
+        super().__init__(status_code=502, detail=detail)
 
 
 class LLMError(APEXError):
-    status_code = 503
-    error_code = "llm_error"
+    def __init__(self, detail: str = "AI service temporarily unavailable") -> None:
+        super().__init__(status_code=503, detail=detail)

@@ -1,7 +1,11 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="The user's message to the assistant.")
-    
+    message: str
+    session_id: str | None = None  # for multi-turn memory within a session
+
+
 class ChatResponse(BaseModel):
-    reply: str = Field(..., description="The assistant's conversational reply.")
+    reply: str
+    tools_used: list[str] = []
