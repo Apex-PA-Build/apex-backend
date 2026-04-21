@@ -3,54 +3,56 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 
-from app.core.cache import close_redis, get_redis
-from app.core.logging import get_logger, setup_logging
+from app.core.cache import close as close_redis, get_redis
+from app.core.logging import get_logger
+from app.core.supabase import close_client, get_client
 
 logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Manage application startup and shutdown."""
-    await _startup()
-    yield
-    await _shutdown()
-
-
-async def _startup() -> None:
-    setup_logging()
+    # ── Startup ──────────────────────────────────────────────────────
     logger.info("apex_starting")
 
-    # Verify DB is reachable
-    from app.db.session import engine
-    from sqlalchemy import text
-
-    async with engine.connect() as conn:
-        await conn.execute(text("SELECT 1"))
-    logger.info("database_connected")
-
-    # Verify Redis
-    redis = await get_redis()
-    await redis.ping()
-    logger.info("redis_connected")
-
-    # Ensure Qdrant collection exists
-    from app.db.vector_store import ensure_collection
     try:
-        await ensure_collection()
-        logger.info("vector_store_ready")
-    except Exception as e:
-        logger.warning(f"vector_store connection skipped: {e}")
+        await get_client()
+        logger.info("supabase_connected")
+    except Exception as exc:
+        logger.warning("supabase_unavailable", error=str(exc))
 
-    logger.info("apex_started")
+    try:
+        await get_redis()
+        logger.info("redis_connected")
+    except Exception as exc:
+        logger.warning("redis_unavailable", error=str(exc))
 
+    try:
+        from app.services.scheduler import start_scheduler
+        await start_scheduler()
+    except Exception as exc:
+        logger.warning("scheduler_failed", error=str(exc))
 
-async def _shutdown() -> None:
-    logger.info("apex_shutting_down")
+    logger.info("apex_ready")
+    yield
 
-    from app.db.session import engine
-    await engine.dispose()
-    logger.info("database_disconnected")
+    # ── Shutdown ─────────────────────────────────────────────────────
+    logger.info("apex_stopping")
 
-    await close_redis()
+    try:
+        from app.services.scheduler import stop_scheduler
+        await stop_scheduler()
+    except Exception:
+        pass
+
+    try:
+        await close_client()
+    except Exception:
+        pass
+
+    try:
+        await close_redis()
+    except Exception:
+        pass
+
     logger.info("apex_stopped")

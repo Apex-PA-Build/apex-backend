@@ -1,39 +1,28 @@
-import uuid
-from datetime import datetime
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class MemoryRead(BaseModel):
-    model_config = {"from_attributes": True}
-
-    id: uuid.UUID
+    id: str
     content: str
     category: str
     source: str
-    created_at: datetime
+    created_at: str
 
 
 class MemorySearchRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=500)
-    limit: int = Field(default=10, ge=1, le=50)
-    category: str | None = None
+    query: str
+    limit: int = 10
 
 
 class MemorySearchResult(BaseModel):
     id: str
     content: str
     category: str
-    score: float
-    created_at: datetime | None = None
+    source: str
+    similarity: float
+    created_at: str
 
 
-class MemoryDeleteResponse(BaseModel):
-    deleted: bool
-    id: uuid.UUID
-
-
-class MemoryListResponse(BaseModel):
-    items: list[MemoryRead]
-    total: int
-    categories: dict[str, int]  # category -> count
+class MemoryCreate(BaseModel):
+    content: str
+    category: str  # preference | relationship | pattern | fact | decision | commitment

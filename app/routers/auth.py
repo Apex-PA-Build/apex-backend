@@ -1,88 +1,108 @@
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
 
-from app.core.exceptions import AuthError, ConflictError
-from app.core.security import (
-    create_access_token,
-    create_refresh_token,
-    get_user_id_from_token,
-    hash_password,
-    verify_password,
-    TOKEN_TYPE_REFRESH,
+from fastapi import APIRouter, HTTPException, Request
+
+from app.core.supabase import get_client
+from app.middleware.auth import get_user_id
+from app.schemas.user import (
+    AuthLogin,
+    AuthRegister,
+    AuthTokenResponse,
+    MoodCheckin,
+    ProfileRead,
+    ProfileUpdate,
 )
-from app.db.session import get_db
-from app.models.user import User
-from app.schemas.user import LoginRequest, TokenResponse, UserCreate, UserRead
+from app.services import brief as brief_svc
 
 router = APIRouter()
 
 
-def _get_current_user_id(request: Request) -> str:
-    user_id: str | None = getattr(request.state, "user_id", None)
-    if not user_id:
-        raise AuthError("Not authenticated")
-    return user_id
+# ── Public: register & login ───────────────────────────────────────────────
 
+@router.post("/register", response_model=AuthTokenResponse, summary="Register a new user")
+async def register(body: AuthRegister) -> Any:
+    """Create a new Supabase user and return a usable access token."""
+    client = await get_client()
+    try:
+        res = await client.auth.sign_up(
+            {"email": body.email, "password": body.password}
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-@router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(data: UserCreate, db: AsyncSession = Depends(get_db)) -> TokenResponse:
-    existing = await db.execute(select(User).where(User.email == data.email))
-    if existing.scalar_one_or_none():
-        raise ConflictError(f"Email {data.email} is already registered")
-    user = User(
-        email=data.email,
-        name=data.name,
-        hashed_password=hash_password(data.password),
-        timezone=data.timezone,
-    )
-    db.add(user)
-    await db.flush()
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    if res.user is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Registration failed — check that email confirmation is disabled in Supabase or confirm the email first.",
+        )
 
+    session = res.session
+    if session is None:
+        raise HTTPException(
+            status_code=400,
+            detail="User created but no session returned. Email confirmation may be required.",
+        )
 
-@router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
-    result = await db.execute(select(User).where(User.email == data.email))
-    user = result.scalar_one_or_none()
-    if not user or not verify_password(data.password, user.hashed_password):
-        raise AuthError("Invalid email or password")
-    if not user.is_active:
-        raise AuthError("Account is deactivated")
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    # Optionally set display name
+    if body.name:
+        await client.table("profiles").upsert(
+            {"id": res.user.id, "name": body.name}
+        ).execute()
 
-
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(request: Request) -> TokenResponse:
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        raise AuthError("Missing refresh token")
-    token = auth.removeprefix("Bearer ").strip()
-    user_id = get_user_id_from_token(token, expected_type=TOKEN_TYPE_REFRESH)
-    return TokenResponse(
-        access_token=create_access_token(user_id),
-        refresh_token=create_refresh_token(user_id),
+    return AuthTokenResponse(
+        access_token=session.access_token,
+        expires_in=session.expires_in or 3600,
+        user_id=str(res.user.id),
+        email=res.user.email or body.email,
     )
 
 
-@router.get("/me", response_model=UserRead)
-async def me(request: Request, db: AsyncSession = Depends(get_db)) -> UserRead:
-    user_id = _get_current_user_id(request)
-    result = await db.execute(select(User).where(User.id == user_id))  # type: ignore[arg-type]
-    user = result.scalar_one_or_none()
-    if not user:
-        raise AuthError("User not found")
-    return UserRead.model_validate(user)
+@router.post("/login", response_model=AuthTokenResponse, summary="Login and get token")
+async def login(body: AuthLogin) -> Any:
+    """Sign in with email + password and return the access token."""
+    client = await get_client()
+    try:
+        res = await client.auth.sign_in_with_password(
+            {"email": body.email, "password": body.password}
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid email or password") from exc
+
+    if res.session is None:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    return AuthTokenResponse(
+        access_token=res.session.access_token,
+        expires_in=res.session.expires_in or 3600,
+        user_id=str(res.user.id),
+        email=res.user.email or body.email,
+    )
 
 
-@router.post("/logout", status_code=204)
-async def logout() -> None:
-    # Stateless JWT: client discards token.
-    # For token revocation, push jti to a Redis blocklist here.
-    return None
+# ── Protected: profile & mood ───────────────────────────────────────────────
+
+@router.get("/me", response_model=ProfileRead)
+async def get_profile(request: Request) -> Any:
+    user_id = get_user_id(request)
+    client = await get_client()
+    result = await client.table("profiles").select("*").eq("id", user_id).execute()
+    if not result.data:
+        # Auto-create profile if it doesn't exist (fallback for new users)
+        result = await client.table("profiles").insert({"id": user_id, "name": "New User"}).execute()
+    return result.data[0]
+
+
+@router.patch("/me", response_model=ProfileRead)
+async def update_profile(request: Request, body: ProfileUpdate) -> Any:
+    user_id = get_user_id(request)
+    client = await get_client()
+    payload = {k: v for k, v in body.model_dump().items() if v is not None}
+    result = await client.table("profiles").update(payload).eq("id", user_id).execute()
+    return result.data[0]
+
+
+@router.post("/mood")
+async def checkin_mood(request: Request, body: MoodCheckin) -> dict[str, str]:
+    user_id = get_user_id(request)
+    await brief_svc.save_mood(user_id, body.mood)
+    return {"message": f"Mood set to '{body.mood}'. Adjusting your day accordingly."}

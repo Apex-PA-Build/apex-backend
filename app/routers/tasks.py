@@ -1,138 +1,67 @@
-import uuid
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Query, Request
 
-from app.core.exceptions import AuthError
-from app.db.session import get_db
-from app.schemas.task import (
-    EisenhowerClassifyRequest,
-    EisenhowerClassifyResponse,
-    FocusNowResponse,
-    TaskBulkDefer,
-    TaskCreate,
-    TaskRead,
-    TaskUpdate,
-    BrainDumpRequest,
-    BrainDumpResponse,
-    ReplanDayRequest,
-    ReplanDayResponse,
-)
-from app.services.task_service import (
-    bulk_defer,
-    classify_tasks_eisenhower,
-    create_task,
-    delete_task,
-    focus_now,
-    list_tasks,
-    update_task,
-)
+from app.middleware.auth import get_user_id
+from app.schemas.common import MessageResponse
+from app.schemas.task import BrainDumpRequest, ReplanRequest, TaskCreate, TaskRead, TaskUpdate
+from app.services import task as task_svc
 
 router = APIRouter()
 
 
-def _uid(request: Request) -> str:
-    uid: str | None = getattr(request.state, "user_id", None)
-    if not uid:
-        raise AuthError("Not authenticated")
-    return uid
-
-
 @router.get("", response_model=list[TaskRead])
-async def get_tasks(
+async def list_tasks(
     request: Request,
-    status: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
-) -> list[TaskRead]:
-    tasks, _ = await list_tasks(_uid(request), db, status=status, limit=limit, offset=offset)
-    return [TaskRead.model_validate(t) for t in tasks]
+    status: str | None = Query(None),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
+) -> Any:
+    user_id = get_user_id(request)
+    return await task_svc.list_tasks(user_id, status=status, limit=limit, offset=offset)
 
 
 @router.post("", response_model=TaskRead, status_code=201)
-async def add_task(
-    data: TaskCreate,
+async def create_task(request: Request, body: TaskCreate) -> Any:
+    user_id = get_user_id(request)
+    return await task_svc.create(user_id, body.model_dump())
+
+
+@router.get("/focus", response_model=TaskRead | None)
+async def focus_now(
     request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> TaskRead:
-    task = await create_task(_uid(request), data, db)
-    return TaskRead.model_validate(task)
+    energy: str | None = Query(None, description="Filter by energy level: low|medium|high"),
+) -> Any:
+    user_id = get_user_id(request)
+    return await task_svc.focus_now(user_id, energy=energy)
+
+
+@router.post("/brain-dump", response_model=list[TaskRead], status_code=201)
+async def brain_dump(request: Request, body: BrainDumpRequest) -> Any:
+    user_id = get_user_id(request)
+    return await task_svc.brain_dump(user_id, body.text)
+
+
+@router.post("/replan", response_model=list[TaskRead])
+async def replan_day(request: Request, body: ReplanRequest) -> Any:
+    user_id = get_user_id(request)
+    return await task_svc.replan_day(user_id, body.reason, body.available_minutes)
+
+
+@router.get("/{task_id}", response_model=TaskRead)
+async def get_task(request: Request, task_id: str) -> Any:
+    user_id = get_user_id(request)
+    return await task_svc.get(user_id, task_id)
 
 
 @router.patch("/{task_id}", response_model=TaskRead)
-async def edit_task(
-    task_id: uuid.UUID,
-    data: TaskUpdate,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> TaskRead:
-    task = await update_task(task_id, _uid(request), data, db)
-    return TaskRead.model_validate(task)
+async def update_task(request: Request, task_id: str, body: TaskUpdate) -> Any:
+    user_id = get_user_id(request)
+    return await task_svc.update(user_id, task_id, body.model_dump(exclude_none=True))
 
 
-@router.delete("/{task_id}", status_code=204)
-async def remove_task(
-    task_id: uuid.UUID,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    await delete_task(task_id, _uid(request), db)
-
-
-@router.get("/focus-now", response_model=FocusNowResponse)
-async def get_focus_now(
-    request: Request,
-    energy: str | None = Query(default=None, pattern="^(low|medium|high)$"),
-    db: AsyncSession = Depends(get_db),
-) -> FocusNowResponse:
-    """Return the single most important task to focus on right now."""
-    result = await focus_now(_uid(request), db, energy=energy)
-    return FocusNowResponse(
-        task=TaskRead.model_validate(result["task"]) if result["task"] else None,
-        reason=result["reason"],
-        alternatives=[TaskRead.model_validate(t) for t in result["alternatives"]],
-    )
-
-
-@router.post("/bulk-defer", status_code=200)
-async def defer_tasks(
-    data: TaskBulkDefer,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    count = await bulk_defer(data.task_ids, _uid(request), data.defer_to, db)
-    return {"deferred": count}
-
-
-@router.post("/classify", response_model=EisenhowerClassifyResponse)
-async def classify_eisenhower(
-    data: EisenhowerClassifyRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> EisenhowerClassifyResponse:
-    """Classify tasks into Eisenhower quadrants using LLM + heuristic fallback."""
-    results = await classify_tasks_eisenhower(data.task_ids, _uid(request), db)
-    return EisenhowerClassifyResponse(results=results)
-
-@router.post("/brain-dump", response_model=BrainDumpResponse)
-async def brain_dump(
-    data: BrainDumpRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> BrainDumpResponse:
-    """Parse a stream-of-consciousness text into discrete tasks."""
-    from app.services.task_service import process_brain_dump
-    tasks = await process_brain_dump(data.text, _uid(request), db)
-    return BrainDumpResponse(tasks_created=[TaskRead.model_validate(t) for t in tasks])
-
-@router.post("/replan-day", response_model=ReplanDayResponse)
-async def replan_day(
-    data: ReplanDayRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> ReplanDayResponse:
-    """Compassionately reschedule pending tasks based on an unexpected event."""
-    from app.services.task_service import process_replan_day
-    result = await process_replan_day(data.context, _uid(request), db)
-    return ReplanDayResponse(**result)
+@router.delete("/{task_id}", response_model=MessageResponse)
+async def delete_task(request: Request, task_id: str) -> Any:
+    user_id = get_user_id(request)
+    await task_svc.delete(user_id, task_id)
+    return {"message": "Task deleted"}

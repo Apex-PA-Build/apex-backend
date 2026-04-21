@@ -1,49 +1,45 @@
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
 
-from app.core.exceptions import AuthError
-from app.db.session import get_db
-from app.services.call_service import end_call_session, start_call_session
+from fastapi import APIRouter, Request
+
+from app.middleware.auth import get_user_id
+from app.schemas.call import CallChunk, CallStartResponse, CallSummary
+from app.services import call as call_svc
 
 router = APIRouter()
 
 
-def _uid(request: Request) -> str:
-    uid: str | None = getattr(request.state, "user_id", None)
-    if not uid:
-        raise AuthError("Not authenticated")
-    return uid
+@router.post("/start", response_model=CallStartResponse, status_code=201)
+async def start_call(request: Request, title: str | None = None) -> Any:
+    user_id = get_user_id(request)
+    session = await call_svc.start_session(user_id, title=title)
+    return {"session_id": session["id"], "started_at": session["started_at"]}
 
 
-@router.post("/start", status_code=201)
-async def start_call(request: Request) -> dict:
-    """
-    Log the start of a call session.
-    Returns a session_id to pass to the WebSocket call listener.
-    """
-    session_id = start_call_session(_uid(request))
-    return {"session_id": session_id, "message": "Call session started. Connect to WS /ws/call."}
+@router.post("/{session_id}/transcript")
+async def add_transcript(request: Request, session_id: str, body: CallChunk) -> dict[str, str]:
+    user_id = get_user_id(request)
+    await call_svc.append_transcript(user_id, session_id, body.text)
+    return {"status": "ok"}
 
 
-@router.post("/{session_id}/end")
-async def end_call(
-    session_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """
-    End a call session.
-    Triggers transcript extraction, task creation, and memory storage.
-    """
-    result = await end_call_session(session_id, _uid(request), db)
-    return result
+@router.post("/{session_id}/end", response_model=CallSummary)
+async def end_call(request: Request, session_id: str) -> Any:
+    user_id = get_user_id(request)
+    result = await call_svc.end_session(user_id, session_id)
+    return {
+        "session_id": session_id,
+        "summary": result.get("summary", ""),
+        "action_items": result.get("action_items", []),
+        "decisions": result.get("decisions", []),
+        "people_mentioned": result.get("people_mentioned", []),
+        "follow_ups": result.get("follow_ups", []),
+        "key_dates": result.get("key_dates", []),
+        "tasks_created": result.get("tasks_created", 0),
+    }
 
 
-
-@router.get("/{session_id}/summary")
-async def get_call_summary(session_id: str, request: Request) -> dict:
-    """Retrieve the post-call summary for a completed session."""
-    from app.services.call_service import _active_sessions
-    if session_id in _active_sessions:
-        return {"status": "in_progress", "session_id": session_id}
-    return {"status": "ended", "session_id": session_id, "message": "Call has ended."}
+@router.get("/{session_id}", response_model=dict)
+async def get_call(request: Request, session_id: str) -> Any:
+    user_id = get_user_id(request)
+    return await call_svc.get_session(user_id, session_id)

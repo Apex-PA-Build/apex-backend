@@ -1,92 +1,60 @@
-import uuid
+from typing import Any
 
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Query, Request
 
-from app.core.exceptions import AuthError
-from app.db.session import get_db
-from app.schemas.goal import (
-    AlignmentCheck,
-    GoalCreate,
-    GoalProgressDetail,
-    GoalRead,
-    GoalUpdate,
-    WeeklyReview,
-)
-from app.services.goal_service import (
-    alignment_check,
-    create_goal,
-    get_goal,
-    get_goal_progress,
-    list_goals,
-    update_goal,
-    weekly_review,
-)
+from app.middleware.auth import get_user_id
+from app.schemas.common import MessageResponse
+from app.schemas.goal import GoalCreate, GoalRead, GoalUpdate
+from app.services import goal as goal_svc
 
 router = APIRouter()
 
 
-def _uid(request: Request) -> str:
-    uid: str | None = getattr(request.state, "user_id", None)
-    if not uid:
-        raise AuthError("Not authenticated")
-    return uid
-
-
 @router.get("", response_model=list[GoalRead])
-async def get_goals(request: Request, db: AsyncSession = Depends(get_db)) -> list[GoalRead]:
-    goals = await list_goals(_uid(request), db)
-    return [GoalRead.model_validate(g) for g in goals]
+async def list_goals(request: Request, status: str | None = Query(None)) -> Any:
+    user_id = get_user_id(request)
+    return await goal_svc.list_goals(user_id, status=status)
 
 
 @router.post("", response_model=GoalRead, status_code=201)
-async def add_goal(
-    data: GoalCreate,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> GoalRead:
-    goal = await create_goal(_uid(request), data, db)
-    return GoalRead.model_validate(goal)
+async def create_goal(request: Request, body: GoalCreate) -> Any:
+    user_id = get_user_id(request)
+    return await goal_svc.create(user_id, body.model_dump())
+
+
+@router.get("/review")
+async def weekly_review(request: Request) -> Any:
+    user_id = get_user_id(request)
+    return await goal_svc.weekly_review(user_id)
+
+
+@router.get("/alignment")
+async def alignment_check(request: Request) -> Any:
+    user_id = get_user_id(request)
+    return await goal_svc.alignment_check(user_id)
+
+
+@router.get("/{goal_id}", response_model=GoalRead)
+async def get_goal(request: Request, goal_id: str) -> Any:
+    user_id = get_user_id(request)
+    return await goal_svc.get(user_id, goal_id)
 
 
 @router.patch("/{goal_id}", response_model=GoalRead)
-async def edit_goal(
-    goal_id: uuid.UUID,
-    data: GoalUpdate,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> GoalRead:
-    goal = await update_goal(goal_id, _uid(request), data, db)
-    return GoalRead.model_validate(goal)
+async def update_goal(request: Request, goal_id: str, body: GoalUpdate) -> Any:
+    user_id = get_user_id(request)
+    return await goal_svc.update(user_id, goal_id, body.model_dump(exclude_none=True))
 
 
-@router.get("/{goal_id}/progress", response_model=GoalProgressDetail)
-async def goal_progress(
-    goal_id: uuid.UUID,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> GoalProgressDetail:
-    detail = await get_goal_progress(goal_id, _uid(request), db)
-    return GoalProgressDetail(
-        goal=GoalRead.model_validate(detail["goal"]),
-        **{k: v for k, v in detail.items() if k != "goal"},
-    )
+@router.post("/{goal_id}/recalculate")
+async def recalculate_progress(request: Request, goal_id: str) -> Any:
+    user_id = get_user_id(request)
+    pct = await goal_svc.recalculate_progress(user_id, goal_id)
+    return {"goal_id": goal_id, "progress_pct": pct}
 
 
-@router.get("/weekly-review", response_model=WeeklyReview)
-async def get_weekly_review(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> WeeklyReview:
-    data = await weekly_review(_uid(request), db)
-    return WeeklyReview(
-        goals_reviewed=[GoalRead.model_validate(g) for g in data["goals_reviewed"]],
-        **{k: v for k, v in data.items() if k != "goals_reviewed"},
-    )
-
-
-@router.get("/alignment-check", response_model=AlignmentCheck)
-async def get_alignment_check(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> AlignmentCheck:
-    data = await alignment_check(_uid(request), db)
-    return AlignmentCheck(**data)
+@router.delete("/{goal_id}", response_model=MessageResponse)
+async def delete_goal(request: Request, goal_id: str) -> Any:
+    user_id = get_user_id(request)
+    await goal_svc.delete(user_id, goal_id)
+    return {"message": "Goal marked as abandoned"}
