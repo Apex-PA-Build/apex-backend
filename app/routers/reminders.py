@@ -36,3 +36,11 @@ async def dismiss_reminder(request: Request, reminder_id: str) -> Any:
     user_id = get_user_id(request)
     await reminder_svc.dismiss(user_id, reminder_id)
     return {"message": "Reminder dismissed"}
+
+
+@router.post("/dismiss-all", response_model=MessageResponse)
+async def dismiss_all(request: Request) -> Any:
+    """Dismiss all fired reminders — clears the notifications panel."""
+    user_id = get_user_id(request)
+    await reminder_svc.dismiss_all(user_id)
+    return {"message": "All notifications cleared"}

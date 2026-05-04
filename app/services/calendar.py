@@ -47,11 +47,29 @@ async def _schedule_followup_reminder(user_id: str, event: dict[str, Any]) -> No
     await client.table("reminders").insert({
         "user_id": user_id,
         "title": f"Did you complete: {title}?",
-        "body": f"Your event just ended. Mark it done or reschedule?",
+        "body": "Your session just ended. How did it go?",
         "type": "follow_up",
         "remind_at": end_at,
         "status": "pending",
-        "metadata": {"event_id": event_id, "event_title": title, "type": "event_followup"},
+        "metadata": {
+            "type": "event_followup",
+            "event_id": event_id,
+            "event_title": title,
+            "actions": [
+                {
+                    "label": "✅ Done",
+                    "message": f"I completed '{title}'"
+                },
+                {
+                    "label": "🔄 Reschedule",
+                    "message": f"Reschedule '{title}' to tomorrow at the same time"
+                },
+                {
+                    "label": "⏸ Partially done",
+                    "message": f"I partially completed '{title}', need to continue later"
+                },
+            ],
+        },
     }).execute()
     logger.info("followup_reminder_scheduled", event_id=event_id, remind_at=end_at)
 
