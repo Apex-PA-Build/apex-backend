@@ -86,3 +86,14 @@ async def get_due_reminders(user_id: str) -> list[dict[str, Any]]:
 async def mark_fired(reminder_id: str) -> None:
     client = await get_client()
     await client.table("reminders").update({"status": "fired"}).eq("id", reminder_id).execute()
+
+
+async def dismiss_all(user_id: str) -> None:
+    client = await get_client()
+    await (
+        client.table("reminders")
+        .update({"status": "dismissed"})
+        .eq("user_id", user_id)
+        .eq("status", "fired")
+        .execute()
+    )

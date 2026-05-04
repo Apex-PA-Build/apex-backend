@@ -14,7 +14,7 @@ async def start_scheduler() -> None:
     _scheduler.add_job(
         _check_and_fire_reminders,
         trigger="interval",
-        minutes=5,
+        seconds=30,
         id="reminder_checker",
         replace_existing=True,
     )
@@ -39,9 +39,8 @@ async def stop_scheduler() -> None:
 
 
 async def _check_and_fire_reminders() -> None:
-    """Fire any due reminders and push them to connected users."""
+    """Mark due reminders as fired — Supabase Realtime pushes to UI automatically."""
     from app.core.supabase import get_client
-    from app.services.notification import notification_manager
     from app.utils.datetime import utcnow
 
     try:
@@ -49,7 +48,7 @@ async def _check_and_fire_reminders() -> None:
         now = utcnow().isoformat()
         result = await (
             client.table("reminders")
-            .select("*")
+            .select("id, user_id")
             .eq("status", "pending")
             .lte("remind_at", now)
             .execute()
@@ -57,10 +56,6 @@ async def _check_and_fire_reminders() -> None:
         reminders = result.data or []
 
         for reminder in reminders:
-            await notification_manager.send(reminder["user_id"], {
-                "event": "reminder_fired",
-                "reminder": reminder,
-            })
             await client.table("reminders").update({"status": "fired"}).eq("id", reminder["id"]).execute()
 
         if reminders:

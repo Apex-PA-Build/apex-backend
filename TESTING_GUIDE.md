@@ -1,33 +1,27 @@
 # APEX — Testing Guide
 
-How to verify every part of the backend is working, from a 30-second smoke test to full end-to-end flows.
+End-to-end tests covering all 78 tools, streaming, session memory, and error handling.
 
 ---
 
-## Prerequisites
+## Setup
 
 ```bash
 # 1. Start the server
 uvicorn main:app --reload --port 8000
 
-# 2. In another terminal, export your test JWT (get this from Supabase)
-# Supabase Dashboard → Authentication → Users → click a user → copy JWT
+# 2. Export your JWT (Supabase Dashboard → Authentication → Users → click user → copy JWT)
 export JWT="your-supabase-jwt-here"
 export BASE="http://localhost:8000/api/v1"
 ```
 
 ---
 
-## Level 1 — Is the server alive? (30 seconds)
+## Level 1 — Server Alive (30 seconds)
 
 ```bash
-# Root ping — no auth needed
 curl http://localhost:8000/
-
-# Health check — no auth needed
 curl http://localhost:8000/health
-
-# Swagger UI — open in browser
 open http://localhost:8000/docs
 ```
 
@@ -36,251 +30,60 @@ open http://localhost:8000/docs
 {"service": "APEX", "status": "running", "version": "1.0.0"}
 {"status": "ok"}
 ```
-If `/docs` shows the Swagger page with all routes listed — the server is fully up.
 
 ---
 
 ## Level 2 — Auth & Profile
 
 ```bash
-# Get your profile (tests JWT verification + Supabase connection)
 curl -H "Authorization: Bearer $JWT" $BASE/auth/me
 
-# Update your name
 curl -X PATCH $BASE/auth/me \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Alex", "timezone": "America/New_York"}'
+  -d '{"name": "Yathish", "timezone": "Asia/Kolkata"}'
 
-# Set mood
 curl -X POST $BASE/auth/mood \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{"mood": "focused"}'
 ```
 
-**What this tests:** JWT verification, Supabase read/write, profile auto-creation on first login.
-
-**Expected on GET /auth/me:**
-```json
-{
-  "id": "your-user-uuid",
-  "name": "Alex",
-  "timezone": "America/New_York",
-  "mood_today": "focused",
-  "preferences": {},
-  "created_at": "..."
-}
-```
-
 ---
 
-## Level 3 — Tasks (full CRUD + AI features)
+## Level 3 — Tasks + Goals (CRUD)
 
 ```bash
-# Create a task (also triggers Eisenhower classification in background)
+# Create task
 curl -X POST $BASE/tasks \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{
-    "title": "Prepare Q3 investor deck",
-    "priority": "high",
-    "energy_required": "high",
-    "due_at": "2025-07-15T17:00:00Z"
-  }'
+  -d '{"title": "Prepare Q3 investor deck", "priority": "high", "energy_required": "high"}'
 
-# Save the task ID from the response
-export TASK_ID="uuid-from-response"
-
-# List all tasks
-curl -H "Authorization: Bearer $JWT" "$BASE/tasks?status=pending"
-
-# Get single task
-curl -H "Authorization: Bearer $JWT" $BASE/tasks/$TASK_ID
-
-# Update task status
-curl -X PATCH $BASE/tasks/$TASK_ID \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"status": "in_progress"}'
-
-# Focus Now — which task should I work on?
-curl -H "Authorization: Bearer $JWT" "$BASE/tasks/focus"
-curl -H "Authorization: Bearer $JWT" "$BASE/tasks/focus?energy=high"
-
-# Brain Dump — paste a wall of text, get tasks back
-curl -X POST $BASE/tasks/brain-dump \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Call Sarah about the contract, finish slide deck before Friday, renew gym membership, review Jons PR"}'
-
-# Replan day
-curl -X POST $BASE/tasks/replan \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"reason": "I have a bad headache", "available_minutes": 60}'
-
-# Delete task
-curl -X DELETE -H "Authorization: Bearer $JWT" $BASE/tasks/$TASK_ID
-```
-
-**After creating a task, wait ~3 seconds then GET it again.** The `eisenhower_quadrant` field should now be `1`, `2`, `3`, or `4` — this confirms Claude Haiku is running and Anthropic API key is valid.
-
----
-
-## Level 4 — Goals
-
-```bash
-# Create a goal
+# Create goal
 curl -X POST $BASE/goals \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{
-    "title": "Launch APEX MVP",
-    "category": "work",
-    "target_date": "2025-09-01",
-    "check_in_schedule": "weekly"
-  }'
+  -d '{"title": "Launch APEX MVP", "category": "work", "target_date": "2025-09-01"}'
 
-export GOAL_ID="uuid-from-response"
-
-# List goals
-curl -H "Authorization: Bearer $JWT" $BASE/goals
-
-# Recalculate progress
-curl -X POST -H "Authorization: Bearer $JWT" $BASE/goals/$GOAL_ID/recalculate
-
-# Weekly review (uses Claude Opus — tests expensive model)
-curl -H "Authorization: Bearer $JWT" $BASE/goals/review
-
-# Alignment check
-curl -H "Authorization: Bearer $JWT" $BASE/goals/alignment
+# Focus recommendation
+curl -H "Authorization: Bearer $JWT" $BASE/tasks/focus
 ```
 
 ---
 
-## Level 5 — Calendar
+## Level 4 — Reminders
 
 ```bash
-# Today's schedule with free blocks
-curl -H "Authorization: Bearer $JWT" $BASE/calendar/today
-
-# Create an event
-curl -X POST $BASE/calendar/events \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Deep Work Block",
-    "start_at": "2025-07-15T09:00:00Z",
-    "end_at": "2025-07-15T11:00:00Z"
-  }'
-```
-
-**Expected on /calendar/today:**
-```json
-{
-  "events": [...],
-  "free_blocks": [...],
-  "total_meeting_minutes": 0,
-  "deep_work_available": true,
-  "conflicts": []
-}
-```
-
----
-
-## Level 6 — Memory (tests Voyage AI + pgvector)
-
-```bash
-# Store a memory manually
-curl -X POST $BASE/memory \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Alex prefers deep work in the morning before 11am", "category": "preference"}'
-
-# List memories
-curl -H "Authorization: Bearer $JWT" $BASE/memory
-
-# Semantic search — finds relevant memories even with different wording
-curl -X POST $BASE/memory/search \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "when does the user like to focus?", "limit": 5}'
-```
-
-**The search test is the most important one here.** The query `"when does the user like to focus?"` should return the memory about morning deep work even though the wording is different. This confirms:
-- Voyage AI embedding API is working
-- pgvector `match_memories` RPC is installed in Supabase
-- Similarity score should be > 0.7
-
----
-
-## Level 7 — Daily Brief (Claude Opus)
-
-```bash
-curl -X POST $BASE/brief/generate \
-  -H "Authorization: Bearer $JWT"
-```
-
-This call takes 5-15 seconds — Claude Opus is doing real synthesis. Expected response:
-```json
-{
-  "greeting": "Good morning, Alex...",
-  "narrative": "...",
-  "focus_recommendation": "...",
-  "risks": ["..."],
-  "quick_wins": ["..."],
-  "mood_prompt": "..."
-}
-```
-
-If this works, your full AI pipeline (Supabase data fetch → Claude Opus → structured JSON response) is confirmed end-to-end.
-
----
-
-## Level 8 — Chat (the main AI brain)
-
-```bash
-# Simple question
-curl -X POST $BASE/chat \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What should I focus on right now?"}'
-
-# Action that triggers tools
-curl -X POST $BASE/chat \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Add a task to review the API docs with high priority"}'
-
-# Multi-tool action
-curl -X POST $BASE/chat \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Create a goal to ship APEX by September and add 3 tasks for this week to get started"}'
-```
-
-**Check the `tools_used` field in the response.** For the last message you should see `["create_goal", "create_task", "create_task", "create_task"]` — confirming the agentic loop with multiple tool rounds is working.
-
----
-
-## Level 9 — Reminders
-
-```bash
-# Create a reminder (set it 2 minutes from now to test delivery)
+# Create reminder (set remind_at 2 minutes from now)
 curl -X POST $BASE/reminders \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{
-    "title": "Test reminder",
-    "body": "This is a test",
-    "type": "time",
-    "remind_at": "2025-07-15T10:02:00Z"
-  }'
+  -d '{"title": "Test reminder", "body": "Is this working?", "type": "time", "remind_at": "2025-07-15T10:02:00Z"}'
 
 export REMINDER_ID="uuid-from-response"
 
-# List reminders
+# List
 curl -H "Authorization: Bearer $JWT" "$BASE/reminders?status=pending"
 
 # Snooze
@@ -289,201 +92,498 @@ curl -X POST $BASE/reminders/$REMINDER_ID/snooze \
   -H "Content-Type: application/json" \
   -d '{"minutes": 10}'
 
-# Dismiss
-curl -X POST -H "Authorization: Bearer $JWT" $BASE/reminders/$REMINDER_ID/dismiss
+# Dismiss all
+curl -X POST -H "Authorization: Bearer $JWT" $BASE/reminders/dismiss-all
 ```
 
 ---
 
-## Level 10 — Call Intelligence
+## Level 5 — Memory (Semantic Search)
 
 ```bash
-# Start a call session
-curl -X POST "$BASE/calls/start?title=Q3+Planning+Call" \
-  -H "Authorization: Bearer $JWT"
-
-export SESSION_ID="uuid-from-response"
-
-# Add transcript chunks (do this a few times)
-curl -X POST $BASE/calls/$SESSION_ID/transcript \
+# Store
+curl -X POST $BASE/memory \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{"text": "Okay team, lets align on Q3 targets. Revenue goal is 2 million."}'
+  -d '{"content": "Yathish prefers deep work before 11am, no meetings before 9am", "category": "preference"}'
 
-curl -X POST $BASE/calls/$SESSION_ID/transcript \
+# Semantic search — different wording, should still match
+curl -X POST $BASE/memory/search \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{"text": "Sarah, can you own the forecast by next Friday? John, please update the roadmap."}'
-
-# End session — triggers AI analysis (takes ~5-10s)
-curl -X POST $BASE/calls/$SESSION_ID/end \
-  -H "Authorization: Bearer $JWT"
+  -d '{"query": "when does the user like to focus?", "limit": 5}'
 ```
 
-**Expected:** A full summary with `action_items`, `decisions`, `people_mentioned`, and `tasks_created > 0`. The tasks should appear in your task list automatically.
+**If the search returns the stored memory — Voyage AI + pgvector is working.**
 
 ---
 
-## Level 11 — WebSocket Chat (streaming)
-
-Use this Python script to test the streaming WebSocket:
-
-```python
-# test_websocket.py
-import asyncio
-import json
-import websockets
-
-JWT = "your-supabase-jwt-here"
-
-async def test_chat():
-    uri = "ws://localhost:8000/api/v1/ws/chat"
-    async with websockets.connect(uri) as ws:
-        # Step 1: Auth handshake
-        await ws.send(json.dumps({"token": JWT}))
-        response = await ws.recv()
-        print("Auth:", response)
-
-        # Step 2: Send a message
-        await ws.send(json.dumps({"message": "What are my top 3 tasks right now?"}))
-
-        # Step 3: Stream events
-        while True:
-            event = json.loads(await ws.recv())
-            print(f"[{event['type']}]", event.get("content", event.get("name", "")))
-            if event["type"] == "done":
-                break
-
-asyncio.run(test_chat())
-```
+## Level 6 — Streaming Chat (SSE)
 
 ```bash
-pip install websockets
-python test_websocket.py
+curl -s -N -X POST "$BASE/chat/stream" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Give me a full morning brief — weather in Bangalore, todays schedule, top goal progress, and what to focus on first"}' \
+  --no-buffer
 ```
 
-**Expected output:**
+**Expected output (SSE events):**
 ```
-[connected] 
-[tool_status] get_tasks
-[tool_done] get_tasks
-[chunk] Based on your tasks, here are...
-[chunk] your top 3 priorities...
-[done]
+data: {"type":"status","message":"Checking your calendar..."}
+data: {"type":"status","message":"Reviewing your goals..."}
+data: {"type":"text","content":"Good morning! Here's your brief..."}
+data: {"type":"text","content":" The weather in Bangalore today is..."}
+data: {"type":"done"}
 ```
 
 ---
 
-## Level 12 — Events WebSocket (reminders push)
+## Level 7 — Chat: Session Memory (Context Carry-Over)
 
-```python
-# test_events_ws.py
-import asyncio
-import json
-import websockets
-
-JWT = "your-supabase-jwt-here"
-
-async def listen_events():
-    uri = "ws://localhost:8000/api/v1/ws/events"
-    async with websockets.connect(uri) as ws:
-        # Auth
-        await ws.send(json.dumps({"token": JWT}))
-        print("Auth:", await ws.recv())
-
-        print("Listening for events... (create a reminder due soon to test)")
-        
-        # Keepalive + listen
-        while True:
-            try:
-                event = json.loads(await asyncio.wait_for(ws.recv(), timeout=30))
-                print("EVENT RECEIVED:", event)
-            except asyncio.TimeoutError:
-                # Send ping to keep alive
-                await ws.send(json.dumps({"type": "ping"}))
-                pong = await ws.recv()
-                print("Keepalive:", pong)
-
-asyncio.run(listen_events())
-```
-
-To trigger a real event, create a reminder with `remind_at` set 1-2 minutes from now while this script is running. The APScheduler checks every 5 minutes so you may need to wait.
-
----
-
-## Level 13 — Error Handling Tests
+Send these in the **same session_id** — APEX must remember context between turns.
 
 ```bash
-# 401 — no token
-curl $BASE/tasks
-# Expected: {"detail": "Missing authorization header"}
+SESSION="session-test-$(date +%s)"
 
-# 401 — bad token
-curl -H "Authorization: Bearer bad-token" $BASE/tasks
-# Expected: {"detail": "Invalid token"}
+# Turn 1 — create a goal
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Create a goal: Launch APEX beta by June 30\", \"session_id\": \"$SESSION\"}" | jq .reply
 
-# 404 — task not found
-curl -H "Authorization: Bearer $JWT" $BASE/tasks/00000000-0000-0000-0000-000000000000
-# Expected: {"detail": "Task not found"}
+# Turn 2 — update it (tests: APEX must know WHICH goal from turn 1)
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Update that goal to 40% complete\", \"session_id\": \"$SESSION\"}" | jq .reply
 
-# 422 — missing required field
+# Turn 3 — update again using "it" (tests deep context retention)
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"I just finished the streaming feature, bump it to 60%\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+**Pass criteria:** Turn 2 and 3 must update the correct goal without asking "which goal?" again.
+
+---
+
+## Level 8 — Chat: Multi-Tool in One Message
+
+```bash
+# APEX should call log_expense 3 times from one sentence
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "I spent 850 on groceries, 200 on an Uber, and 1200 on dinner with a client today"}' | jq '{reply: .reply, tools: .tools_used}'
+
+# Should call time_zone_convert + get_weather + create_calendar_event
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "My team in New York wants to meet at 3pm their time tomorrow. What time is that for me in Bangalore, whats the weather there, and block that meeting in my calendar"}' | jq '{reply: .reply, tools: .tools_used}'
+```
+
+**Check `tools_used` in response** — multiple tools should appear.
+
+---
+
+## Level 9 — Calendar: Create → Extend → Complete
+
+```bash
+SESSION="cal-$(date +%s)"
+
+# Step 1: Create
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Schedule a deep work block tomorrow 10am to 12pm called Project Review\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Step 2: Extend (fuzzy title match must work)
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Extend the Project Review by 30 minutes\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Step 3: Complete
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"I just finished the Project Review, mark it done\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+**Pass criteria:** Step 2 must update `end_at` of existing event (not create a new one). Step 3 must set status to completed and dismiss the follow-up reminder.
+
+---
+
+## Level 10 — Finance Flow
+
+```bash
+SESSION="finance-$(date +%s)"
+
+# Log expenses
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"I spent 850 on groceries, 200 on Uber, and 1200 on dinner with a client today\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Add subscription
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Track my Netflix subscription at 649 rupees per month\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Track money owed
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Rahul owes me 500 rupees for the Uber last week\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Get spending summary
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"How much have I spent this week and what do people owe me?\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+---
+
+## Level 11 — Habits: Create → Log → Streaks
+
+```bash
+SESSION="habit-$(date +%s)"
+
+# Create 3 habits
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Create habits for: daily meditation (target 10 minutes), running (target 30 minutes), reading (target 20 pages)\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Log all three from one message
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Done for today — meditated 15 minutes, ran 5km in 35 minutes, read 22 pages\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Check streaks
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Show me my habit streaks\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+**Pass criteria:** Log turn must call `log_habit` 3 times (one per habit) from a single sentence.
+
+---
+
+## Level 12 — Project + Notes + Lists (Linked Flow)
+
+```bash
+SESSION="project-$(date +%s)"
+
+# Create project
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Create a project called APEX Launch with deadline May 15th, status in_progress\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Create note for the project
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Note titled APEX Launch: Need to finish streaming, fix calendar bugs, and deploy before May 15\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Create a checklist
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Create APEX Launch checklist with: streaming endpoint, calendar fix, deploy script, user testing\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Full status pull
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Show me everything about the APEX Launch project — status, notes, and checklist\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+---
+
+## Level 13 — Routines: Create → Run
+
+```bash
+SESSION="routine-$(date +%s)"
+
+# Create
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Create a morning routine: 1) Drink water 2) 10 min meditation 3) Review todays calendar 4) Pick top 3 tasks 5) Start deep work\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Run it
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Run my morning routine\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+---
+
+## Level 14 — Daily Summary + Workload Check
+
+```bash
+SESSION="workload-$(date +%s)"
+
+# Stack the plate with tasks
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"I need to finish the API docs, review 3 PRs, call the client, prep the demo, and submit tax docs — all by tomorrow\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Reality check
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Check my workload and tell me honestly if this is doable\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Full summary
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Give me todays full summary"}' | jq .reply
+```
+
+---
+
+## Level 15 — Decision Support
+
+```bash
+# Multi-option comparison
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Help me decide: Option A - take freelance project (more money, less time), Option B - focus on APEX launch (more impact, zero income for 2 months), Option C - do both part time (balanced but risky)"}' | jq .reply
+
+# Pros and cons
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Give me pros and cons of moving from Bangalore to Hyderabad for work"}' | jq .reply
+
+# Deadline countdown
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "How many days do I have left until my APEX launch deadline and am I on track?"}' | jq .reply
+```
+
+---
+
+## Level 16 — Health + Journal + Wins
+
+```bash
+SESSION="health-$(date +%s)"
+
+# Log health data
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Logged: slept 7.5 hours, drank 2.5 litres of water, had oats for breakfast\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Log a workout
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Just finished a 45 minute chest and shoulder workout\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Journal + win
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Journal: Finally cracked the streaming issue after 3 hours. Worth it. Also log a win — fixed the APEX streaming bug!\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Summary
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Show me my health summary and recent wins\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+---
+
+## Level 17 — People / Relationships
+
+```bash
+SESSION="people-$(date +%s)"
+
+# Add person note
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Note about Rahul: He's a senior engineer at Flipkart, we met at JSConf 2024, interested in collaborating on APEX\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Add birthday
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Rahul's birthday is March 15\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Log interaction
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Had coffee with Rahul today, discussed potential partnership on APEX\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Check upcoming birthdays
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Who has a birthday coming up in the next 30 days?\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+---
+
+## Level 18 — Learning + Books
+
+```bash
+SESSION="learning-$(date +%s)"
+
+# Add book
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Add Deep Work by Cal Newport to my reading list\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Log learning
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"Just learned about pgvector indexing — HNSW index is faster for approximate search, IVFFlat is better for exact. Save this.\", \"session_id\": \"$SESSION\"}" | jq .reply
+
+# Get reading list
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"What books are on my reading list?\", \"session_id\": \"$SESSION\"}" | jq .reply
+```
+
+---
+
+## Level 19 — Utilities
+
+```bash
+# Calculate
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is 18% GST on 47500 rupees?"}' | jq .reply
+
+# Timezone convert
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Convert 3pm New York time to Bangalore time"}' | jq .reply
+
+# Weather
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Whats the weather like in Bangalore right now?"}' | jq .reply
+
+# Drafting
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Draft a WhatsApp message to my client Priya saying I need 2 more days on the feature, professional but friendly tone"}' | jq .reply
+```
+
+---
+
+## Level 20 — Error Handling (Should Not Crash)
+
+```bash
+# Non-existent list — should return empty, not 500
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Show me my unicorn list"}' | jq .reply
+
+# Extend event that does not exist
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Extend my dentist appointment by 1 hour"}' | jq .reply
+
+# Bad math expression
+curl -s -X POST "$BASE/chat" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Calculate: drop table users"}' | jq .reply
+
+# Missing required fields
 curl -X POST $BASE/tasks \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{}'
-# Expected: 422 Unprocessable Entity with field validation errors
+  -d '{}' | jq .
+# Expected: 422 with validation errors, not 500
 
-# 429 — rate limit (fire 65 requests fast)
-for i in $(seq 1 65); do curl -s -o /dev/null -w "%{http_code}\n" \
-  -H "Authorization: Bearer $JWT" $BASE/health; done
-# Expected: first 60 return 200, then 429
+# Expired / bad token
+curl -H "Authorization: Bearer bad-token" $BASE/tasks | jq .
+# Expected: 401
 ```
+
+---
+
+## Supabase Realtime — Notification Test
+
+After setting up Realtime on the `reminders` table in Supabase:
+
+1. Open Supabase Table Editor → `reminders` table in a browser tab
+2. Create a reminder with `remind_at` = now + 1 minute via chat:
+   ```bash
+   curl -s -X POST "$BASE/chat" \
+     -H "Authorization: Bearer $JWT" \
+     -H "Content-Type: application/json" \
+     -d '{"message": "Remind me to drink water in 1 minute"}' | jq .reply
+   ```
+3. Watch the server logs — you should see `_check_and_fire_reminders` fire and update `status` to `fired`
+4. In Supabase Table Editor, the row's `status` column should change to `fired` in real-time
+5. On the UI side, the Supabase Realtime subscription should receive that row update and trigger the notification
 
 ---
 
 ## Quick Diagnostic Checklist
 
-Run these in order when something is broken:
-
 | Test | Command | If it fails |
 |------|---------|-------------|
 | Server up | `curl localhost:8000/health` | Restart uvicorn |
-| Supabase connected | `curl -H "Auth: Bearer $JWT" $BASE/auth/me` | Check SUPABASE_URL + ANON_KEY in .env |
-| JWT valid | Same as above, look for 401 | Get fresh JWT from Supabase dashboard |
-| Anthropic working | Create a task, wait 3s, GET it — check `eisenhower_quadrant` | Check ANTHROPIC_API_KEY in .env |
-| Voyage AI working | POST to `/memory/search` | Check VOYAGE_API_KEY in .env |
-| pgvector installed | Same as above, look for RPC error | Run `supabase/schema.sql` in Supabase SQL Editor |
-| Redis working | Check server logs on startup for `redis_connected` | Run `brew services start redis` |
-| Reminders firing | Check server logs every 5 min for `_check_and_fire_reminders` | Redis or scheduler issue |
+| Supabase connected | `curl -H "Authorization: Bearer $JWT" $BASE/auth/me` | Check SUPABASE_URL + ANON_KEY in .env |
+| JWT valid | Same, look for 401 | Get fresh JWT from Supabase dashboard |
+| Anthropic API | Create task, wait 3s, GET it — check `eisenhower_quadrant` | Check ANTHROPIC_API_KEY in .env |
+| Voyage AI + pgvector | POST `/memory/search` | Check VOYAGE_API_KEY, run schema.sql |
+| New tables exist | Chat: "add milk to grocery list" | Run `supabase/schema_v2.sql` in SQL Editor |
+| Streaming works | `curl -N POST /chat/stream` — SSE events flow | Check for errors in server logs |
+| Reminders firing | Server logs every 30s for `_check_and_fire_reminders` | Check APScheduler started |
 
 ---
 
-## Using Swagger UI (no curl needed)
-
-1. Open `http://localhost:8000/docs`
-2. Click **Authorize** (top right)
-3. Enter: `Bearer your-jwt-here`
-4. Click any endpoint → **Try it out** → **Execute**
-
-Every endpoint can be tested interactively this way. The request/response schema is shown automatically.
-
----
-
-## What a Fully Working System Looks Like
+## What Full Success Looks Like
 
 ```
-✓ GET /health                    → {"status": "ok"}
-✓ GET /auth/me                   → profile object (Supabase connected)
-✓ POST /tasks                    → task created
-✓ GET /tasks/{id} after 3s       → eisenhower_quadrant set (Claude Haiku working)
-✓ POST /memory/search            → results with similarity score (Voyage AI + pgvector working)
-✓ POST /brief/generate           → full brief object (Claude Opus working)
-✓ POST /chat with action message → reply + tools_used list (agentic loop working)
-✓ WS /ws/chat                    → streaming chunks (WebSocket + streaming working)
+✓ GET  /health                         → {"status": "ok"}
+✓ GET  /auth/me                        → profile object
+✓ POST /chat (multi-tool message)      → tools_used has 3+ entries
+✓ POST /chat/stream                    → SSE events stream in real time
+✓ POST /chat (session turn 2)          → APEX remembers turn 1 context
+✓ POST /memory/search                  → semantic match found (Voyage AI working)
+✓ Calendar create → extend → complete  → same event updated, not duplicated
+✓ Habit log from one sentence          → log_habit called 3 times
+✓ Expense log from one sentence        → log_expense called 3 times
+✓ Routine run                          → returns steps array
+✓ Supabase reminder status → "fired"   → Realtime pushes update to UI
 ✓ Server logs show:
     apex_starting
     supabase_connected
-    redis_connected
     scheduler_started
     apex_ready
 ```

@@ -12,7 +12,6 @@ from app.routers import (
     memory,
     reminders,
     tasks,
-    websockets,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -28,4 +27,3 @@ api_router.include_router(agent.router,        prefix="/agent",        tags=["Ag
 api_router.include_router(calls.router,        prefix="/calls",        tags=["Calls"])
 api_router.include_router(reminders.router,    prefix="/reminders",    tags=["Reminders"])
 api_router.include_router(integrations.router, prefix="/integrations", tags=["Integrations"])
-api_router.include_router(websockets.router,                           tags=["WebSockets"])
